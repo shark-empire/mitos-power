@@ -1,0 +1,8 @@
+# mitos-power: thermal thresholds. mitos-power only *observes* and reacts at
+# the policy level (dropping to powersave, warning the user); it never
+# fights the kernel's own thermal-protection driver.
+
+poll_interval_secs = 5
+warning_temp_c = 80.0
+critical_temp_c = 95.0
+critical_action = "emergency_shutdown"

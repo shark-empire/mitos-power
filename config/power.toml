@@ -1,0 +1,22 @@
+# mitos-power: general daemon + input-device policy.
+
+[general]
+socket_path = "/run/mitos/power.sock"
+socket_group = "power"          # unix group allowed to connect w/o being root
+log_level = "info"              # trace | debug | info | warn | error
+state_dir = "/var/lib/mitos/power"
+
+[security]
+# Group whose members may call privileged methods (Suspend, Shutdown, ...)
+# in addition to root (uid 0). See docs/ipc.md "Permissions".
+privileged_group = "power"
+
+[power_button]
+short_press = "suspend"   # ignore | lock | suspend | hibernate | shutdown | reboot
+long_press  = "shutdown"
+multi_press = "ignore"
+long_press_threshold_ms = 1500
+multi_press_window_ms = 600
+
+[keyboard]
+brightness_hotkeys = true

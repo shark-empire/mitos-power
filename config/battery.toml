@@ -1,0 +1,9 @@
+# mitos-power: battery thresholds and polling.
+
+poll_interval_secs = 30
+
+low_threshold_percent = 20
+low_action = "notify"
+
+critical_threshold_percent = 5
+critical_action = "hibernate"   # notify | suspend | hibernate | shutdown

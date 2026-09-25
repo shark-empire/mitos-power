@@ -1,0 +1,12 @@
+# mitos-power: brightness + idle timeouts. Values here are defaults; each
+# power profile can override display_timeout_secs / max brightness.
+
+default_brightness_percent = 70
+dim_timeout_secs = 300
+off_timeout_secs = 600
+suspend_on_idle = false
+suspend_timeout_secs = 1800
+
+night_mode_enabled = false
+night_mode_start = "21:00"
+night_mode_end = "07:00"

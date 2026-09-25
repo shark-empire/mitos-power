@@ -1,0 +1,14 @@
+# mitos-power: power profiles. "performance", "balanced" and "powersave" are
+# built in (see src/profiles/); anything else listed here as [[profile]] is
+# a custom, fully user-defined profile.
+
+default_profile = "balanced"
+
+[[profile]]
+name = "studio"
+cpu_governor = "performance"
+cpu_boost = true
+display_timeout_secs = 900
+display_max_brightness_percent = 100
+background_throttle = false
+description = "Custom profile: no idle dimming, CPU pinned high, for A/V work"
