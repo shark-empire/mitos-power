@@ -1,0 +1,31 @@
+# systemd unit for mitos-power. MITOS's own service manager (mitos-services)
+# is the primary target, but this is included for systemd-based development
+#/testing setups and as a compatibility fallback -- adapt the [Service]
+# section if mitos-services uses a different unit format.
+
+[Unit]
+Description=MITOS power management daemon
+Documentation=https://github.com/mitos-project/mitos-power/blob/main/docs/architecture.md
+After=multi-user.target
+DefaultDependencies=no
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/mitos-power --config-dir /etc/mitos/power
+Restart=on-failure
+RestartSec=2
+
+# mitos-power needs root for suspend/hibernate/reboot syscalls and for
+# writing sysfs control files (brightness, governor, ...). Capabilities-
+# based least-privilege (CAP_SYS_BOOT + write access to the specific sysfs
+# paths, dropping the rest) is a natural hardening follow-up -- see
+# docs/security.md.
+User=root
+
+RuntimeDirectory=mitos
+RuntimeDirectoryMode=0755
+StateDirectory=mitos/power
+StateDirectoryMode=0750
+
+[Install]
+WantedBy=multi-user.target
