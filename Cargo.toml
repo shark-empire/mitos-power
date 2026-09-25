@@ -1,0 +1,55 @@
+[package]
+name = "mitos-power"
+version = "0.1.0"
+edition = "2021"
+description = "MITOS central power-management daemon"
+license = "MIT"
+authors = ["MITOS Project"]
+default-run = "mitos-power"
+
+# Shared code (protocol types, managers, hardware access) lives in src/lib.rs
+# so that both binaries below can depend on the exact same types instead of
+# duplicating the IPC protocol. This is one deliberate deviation from the
+# spec's file tree (which only listed src/main.rs) -- see README.md.
+[lib]
+name = "mitos_power"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mitos-power"
+path = "src/main.rs"
+
+[[bin]]
+name = "mitos-powerctl"
+path = "bin/mitos-powerctl.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "fs", "io-util", "io-std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+anyhow = "1"
+
+# Netlink/kobject hotplug monitoring (battery, AC, lid uevents).
+udev = "0.8"
+
+# Raw reboot(2)/sync(2) syscalls for shutdown/reboot/poweroff, and peer-group
+# lookups for IPC permission checks. NOTE: nix's feature-flag names have
+# moved around across 0.2x releases -- if `cargo build` complains about a
+# missing feature, check `cargo add nix --features reboot,user` for the
+# version that actually resolves and adjust this list.
+nix = { version = "0.27", features = ["reboot", "user", "fs"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+
+[profile.dev]
+opt-level = 0
