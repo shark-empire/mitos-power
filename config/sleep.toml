@@ -1,0 +1,11 @@
+# mitos-power: suspend/hibernate behavior.
+
+default_method = "suspend"      # suspend | hibernate | hybrid_sleep | suspend_then_hibernate
+lock_before_suspend = true
+suspend_then_hibernate_delay_mins = 120
+
+[lid]
+close_action_ac = "lock"
+close_action_battery = "suspend"
+open_action = "wake"
+external_monitor_ignore_lid = true
