@@ -59,6 +59,18 @@ opt-in, typically much longer threshold (`display.suspend_on_idle` +
 ## Inhibitors
 
 Free-form `(who, why, what, mode)` leases, auto-released when the holding
-IPC connection closes. `what` is `suspend | shutdown | idle | all`; `mode` is
-`block | delay` (v0 treats both identically -- see audit.md for the planned
-grace-period semantics of `delay`).
+IPC connection closes. `what` is `suspend | shutdown | idle | all`.
+
+`mode` is `block | delay`:
+- **Block** fails the request immediately (`INHIBITED` error) while held.
+- **Delay** gives the holder up to `general.inhibitor_delay_grace_secs`
+  (default 5s) to release it, polling every 250ms; if it's still held when
+  the grace period runs out, the action proceeds anyway. Delay never blocks
+  forever -- it's for "let me finish saving" style use cases, not a veto.
+
+Idle-triggered actions (dim/off/auto-suspend) treat Block and Delay
+identically (both fully block, no grace period) -- a recurring per-second
+action re-evaluating "should I wait 5 more seconds, then dim anyway" on
+every tick doesn't match Delay's intent the way a one-shot Suspend/Shutdown
+does. See `InhibitorManager::split_blockers`/`wait_for_delay_clear` vs.
+`blockers`.

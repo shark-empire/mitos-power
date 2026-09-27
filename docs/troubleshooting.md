@@ -17,8 +17,12 @@ Suspend/Hibernate today -- release the inhibitor instead).
 **Hibernate fails with `UNSUPPORTED`**
 The kernel's `/sys/power/state` doesn't list `disk`. Usually means no swap,
 swap smaller than RAM, or missing `resume=<device>` on the kernel command
-line. mitos-power does not check swap sizing itself before attempting the
-write -- see audit.md.
+line. mitos-power logs a warning (not a hard block) if `/proc/swaps` shows
+no active swap at all before even attempting the write, since that's the
+single most common cause -- check the daemon log for that line first. It
+does not check swap *size* vs. RAM or `resume=` correctness, so a kernel
+that lists `disk` as supported but is still misconfigured will fail at the
+syscall itself rather than being caught early.
 
 **Brightness calls return `UNSUPPORTED`**
 No `/sys/class/backlight/*` device was found at daemon startup. Common on
@@ -26,16 +30,22 @@ desktops/VMs (no backlight to control) and on some external-only-display
 laptops depending on driver support. `mitos-powerctl status` won't show a
 brightness line in this case either.
 
-**Lid close/open isn't detected instantly**
-Lid state is polled (via `/proc/acpi/button/lid`) on the daemon's regular
-poll tick, not watched live via evdev -- expect up to `poll_interval_secs`
-of latency (a few seconds by default). See audit.md for what a live evdev
-watcher would add.
+**Lid close/open takes a few seconds to register**
+This means the evdev watcher didn't find a `SW_LID`-reporting device at
+startup (check the daemon log), so mitos-power fell back to polling
+`/proc/acpi/button/lid` on the regular poll tick -- expect up to
+`poll_interval_secs` of latency in that fallback mode (a few seconds by
+default). With the evdev watcher active, lid changes are instant.
 
 **Power button / brightness hotkeys don't do anything**
-These aren't wired to a live input event source yet -- the decision logic
-(`devices::power_button`, `devices::keyboard`) is implemented and tested,
-but nothing currently calls it. See audit.md.
+Check the daemon log at startup for the evdev watcher line -- it logs
+either "evdev input watcher active" or a specific reason it couldn't find
+a matching device (most likely cause: the daemon isn't running with
+permission to read `/dev/input/event*`, which normally means membership in
+the `input` group or running as root). This is also the single least
+hardware-tested part of mitos-power -- see audit.md section 0 and the
+`src/hardware/evdev.rs` header comment if it's failing in a way that looks
+like a wrong API call rather than a permissions issue.
 
 **A setting in `power.toml` doesn't seem to apply after I sent SIGHUP**
 Some config is cached at startup (the profile list, idle timeouts) and needs
