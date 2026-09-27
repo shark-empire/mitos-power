@@ -70,13 +70,16 @@ every event, the permission model, and the exact wire format.
 
 ## Notes on structure
 
-This follows the spec's `src/` layout exactly, with one addition:
-`src/lib.rs`. The original structure listed only `src/main.rs`, but with two
+This follows the spec's `src/` layout exactly, with two additions.
+`src/lib.rs`: the original structure listed only `src/main.rs`, but with two
 binaries (`mitos-power`, `mitos-powerctl`) sharing the IPC protocol, a
 library crate is the standard way to guarantee both are built from the
 identical Rust types rather than two independently-maintained copies of the
 wire format. `src/main.rs` and `bin/mitos-powerctl.rs` are now both thin
-wrappers around `mitos_power::*`.
+wrappers around `mitos_power::*`. `src/hardware/evdev.rs`: live key/switch
+events (power button, lid, brightness hotkeys) need a real event source
+that plain uevents can't provide -- see audit.md for how hardware-verified
+this specific file is (short answer: less than everything else).
 
 ## License
 

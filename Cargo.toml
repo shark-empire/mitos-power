@@ -36,8 +36,17 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 anyhow = "1"
 
-# Netlink/kobject hotplug monitoring (battery, AC, lid uevents).
+# Netlink/kobject hotplug monitoring (battery, AC power_supply add/change/remove).
 udev = "0.8"
+
+# Live key/switch events -- power button, lid switch, brightness hotkeys.
+# uevents (above) only cover hotplug, not individual keypresses/switch
+# toggles, so this is a separate, necessary dependency. Same caveat as
+# udev: confident in the general shape of this crate's API
+# (enumerate/supported_switches/supported_keys/fetch_events) but not
+# pinned to one exact version's method signatures -- see
+# src/hardware/evdev.rs and audit.md.
+evdev = "0.12"
 
 # Raw reboot(2)/sync(2) syscalls for shutdown/reboot/poweroff, and peer-group
 # lookups for IPC permission checks. NOTE: nix's feature-flag names have
