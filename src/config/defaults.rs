@@ -15,6 +15,11 @@ pub struct GeneralConfig {
     pub socket_group: String,
     pub log_level: String,
     pub state_dir: String,
+    /// How long a `Delay`-mode inhibitor gets to release itself before
+    /// Suspend/Shutdown proceed anyway. `Block`-mode inhibitors are
+    /// unaffected by this -- they fail the request immediately, with no
+    /// waiting. See docs/power-model.md "Inhibitors".
+    pub inhibitor_delay_grace_secs: u64,
 }
 
 impl Default for GeneralConfig {
@@ -24,6 +29,7 @@ impl Default for GeneralConfig {
             socket_group: "power".into(),
             log_level: "info".into(),
             state_dir: "/var/lib/mitos/power".into(),
+            inhibitor_delay_grace_secs: 5,
         }
     }
 }
