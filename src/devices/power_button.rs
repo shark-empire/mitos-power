@@ -1,15 +1,13 @@
 //! Power-button press classification (short / long / multi-press).
 //!
-//! The classification logic below (`classify`) is fully implemented and
-//! unit tested. What is **not** implemented is a live hardware event
-//! source feeding it: reading `KEY_POWER` press/release timing requires
-//! an evdev watcher (uevents do not carry individual keypresses -- they
-//! signal device hotplug, not key events). See audit.md.
-//!
-//! A future evdev integration should: watch the input device(s) that
-//! report `KEY_POWER`, track press-start/release timestamps and a
-//! rolling press count, call `classify()` with the results, then `apply()`
-//! with whatever it returns -- both are already here and ready to use.
+//! `classify()` is pure and unit tested; `apply()` carries out whatever it
+//! returns. The live event source is `hardware::evdev::spawn_watcher`,
+//! consumed by `daemon::event_loop`'s `PowerButtonTracker`, which turns
+//! raw press/release timestamps into the `held_for`/`recent_press_count`
+//! this module's `classify()` expects. Requires evdev to find a device
+//! that reports `KEY_POWER` at startup -- see audit.md for what happens
+//! when it doesn't (falls back to no power-button handling at all, same
+//! as before this was wired up).
 
 use crate::config::PowerButtonConfig;
 use crate::manager::PowerManager;

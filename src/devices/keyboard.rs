@@ -1,8 +1,10 @@
 //! Brightness hotkey handling (KEY_BRIGHTNESSUP / KEY_BRIGHTNESSDOWN).
 //!
-//! Like `power_button`, the step logic here is fully implemented and unit
-//! tested; the live evdev event source that would call it is not wired up
-//! yet -- see audit.md.
+//! `step_up`/`step_down` are pure and unit tested. The live event source
+//! is `hardware::evdev::spawn_watcher`, consumed directly by
+//! `daemon::event_loop` (no extra state needed here, unlike power_button's
+//! press-timing tracker -- each hotkey press is a complete signal on its
+//! own).
 
 use crate::manager::PowerManager;
 use std::sync::Arc;
