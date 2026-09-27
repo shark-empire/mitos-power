@@ -23,9 +23,11 @@ impl InhibitWhat {
 pub enum InhibitMode {
     /// Refuse the action outright while the inhibitor is held.
     Block,
-    /// Give the holder a grace period to save state, then proceed anyway.
-    /// v0 treats Delay identically to Block (see docs/ipc.md "Inhibitors"
-    /// for the planned grace-period semantics); tracked separately so the
-    /// wire format doesn't need to change when that lands.
+    /// Give the holder a grace period (`general.inhibitor_delay_grace_secs`)
+    /// to release it, then proceed anyway regardless -- see
+    /// `InhibitorManager::wait_for_delay_clear` and
+    /// `PowerManager::ensure_not_inhibited`. Idle-triggered actions treat
+    /// this the same as `Block` (see `idle::inhibitors`); Suspend/Shutdown
+    /// give it the real grace-period behavior.
     Delay,
 }

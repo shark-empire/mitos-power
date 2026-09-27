@@ -40,7 +40,11 @@ impl InhibitorManager {
 
     /// Human-readable "who: why" strings for every currently held inhibitor
     /// that covers `target`. An empty vec means the action is allowed to
-    /// proceed.
+    /// proceed. Treats Block and Delay modes identically -- appropriate
+    /// for callers (like idle dim/off) where "wait a few seconds, then do
+    /// it anyway" doesn't make sense for a recurring action. For
+    /// Suspend/Shutdown, prefer `split_blockers` so Delay-mode inhibitors
+    /// get their grace period instead of hard-blocking forever.
     pub async fn blockers(&self, target: InhibitWhat) -> Vec<String> {
         self.inner
             .read()
@@ -49,6 +53,44 @@ impl InhibitorManager {
             .filter(|i| i.what.covers(target))
             .map(|i| format!("{}: {}", i.who, i.why))
             .collect()
+    }
+
+    /// Like `blockers`, but split by mode: `(block_mode, delay_mode)`.
+    /// Callers that want real Delay semantics (a grace period, then
+    /// proceed anyway) should check `block_mode` for a hard failure and
+    /// use `wait_for_delay_clear` for `delay_mode` -- see
+    /// `PowerManager::ensure_not_inhibited`.
+    pub async fn split_blockers(&self, target: InhibitWhat) -> (Vec<String>, Vec<String>) {
+        let map = self.inner.read().await;
+        let mut blocking = Vec::new();
+        let mut delaying = Vec::new();
+        for i in map.values().filter(|i| i.what.covers(target)) {
+            let label = format!("{}: {}", i.who, i.why);
+            match i.mode {
+                super::reason::InhibitMode::Block => blocking.push(label),
+                super::reason::InhibitMode::Delay => delaying.push(label),
+            }
+        }
+        (blocking, delaying)
+    }
+
+    /// Polls until no Delay-mode inhibitor covers `target` anymore, or
+    /// `grace` elapses, whichever comes first. Returns `true` if it
+    /// cleared naturally, `false` if the grace period ran out (the caller
+    /// should proceed anyway in that case -- Delay never blocks forever).
+    pub async fn wait_for_delay_clear(&self, target: InhibitWhat, grace: std::time::Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + grace;
+        let poll_interval = std::time::Duration::from_millis(250).min(grace);
+        loop {
+            let (_, delaying) = self.split_blockers(target).await;
+            if delaying.is_empty() {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
     }
 
     /// Called by the IPC server when a client connection closes, so
@@ -94,5 +136,44 @@ mod tests {
         let remaining = mgr.list().await;
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].who, "app-b");
+    }
+
+    #[tokio::test]
+    async fn delay_mode_clears_naturally_before_the_grace_period() {
+        let mgr = InhibitorManager::default();
+        let client = Uuid::new_v4();
+        let id = mgr.acquire(client, "installer".into(), "System update running".into(), InhibitWhat::Shutdown, InhibitMode::Delay).await;
+
+        // Released before we ever start waiting -- wait_for_delay_clear's
+        // first check (before its first sleep) should see it's already gone.
+        mgr.release(id).await.unwrap();
+
+        let cleared = mgr.wait_for_delay_clear(InhibitWhat::Shutdown, std::time::Duration::from_secs(2)).await;
+        assert!(cleared, "should report cleared since the inhibitor was already released before waiting");
+    }
+
+    #[tokio::test]
+    async fn delay_mode_times_out_and_reports_not_cleared() {
+        let mgr = InhibitorManager::default();
+        let client = Uuid::new_v4();
+        mgr.acquire(client, "installer".into(), "System update running".into(), InhibitWhat::Shutdown, InhibitMode::Delay).await;
+        // Never released -- the grace period must still expire and hand
+        // control back, not hang forever.
+        let cleared = mgr.wait_for_delay_clear(InhibitWhat::Shutdown, std::time::Duration::from_millis(300)).await;
+        assert!(!cleared, "should report NOT cleared once the grace period elapses with the inhibitor still held");
+    }
+
+    #[tokio::test]
+    async fn split_blockers_separates_block_from_delay() {
+        let mgr = InhibitorManager::default();
+        let client = Uuid::new_v4();
+        mgr.acquire(client, "backup".into(), "Backup running".into(), InhibitWhat::Shutdown, InhibitMode::Block).await;
+        mgr.acquire(client, "installer".into(), "Update running".into(), InhibitWhat::Shutdown, InhibitMode::Delay).await;
+
+        let (blocking, delaying) = mgr.split_blockers(InhibitWhat::Shutdown).await;
+        assert_eq!(blocking.len(), 1);
+        assert_eq!(delaying.len(), 1);
+        assert!(blocking[0].contains("backup"));
+        assert!(delaying[0].contains("installer"));
     }
 }
