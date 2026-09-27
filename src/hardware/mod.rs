@@ -6,6 +6,7 @@
 
 pub mod acpi;
 pub mod capabilities;
+pub mod evdev;
 pub mod sysfs;
 pub mod uevent;
 
