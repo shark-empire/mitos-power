@@ -5,6 +5,10 @@ socket_path = "/run/mitos/power.sock"
 socket_group = "power"          # unix group allowed to connect w/o being root
 log_level = "info"              # trace | debug | info | warn | error
 state_dir = "/var/lib/mitos/power"
+# How long a Delay-mode inhibitor gets to release itself before Suspend/
+# Shutdown proceed anyway. Block-mode inhibitors ignore this and fail the
+# request immediately -- see docs/power-model.md "Inhibitors".
+inhibitor_delay_grace_secs = 5
 
 [security]
 # Group whose members may call privileged methods (Suspend, Shutdown, ...)
