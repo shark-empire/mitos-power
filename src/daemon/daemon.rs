@@ -30,6 +30,8 @@ impl Daemon {
         let ipc_server = IpcServer::new(socket_path, socket_group, self.manager.clone());
         let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
 
+        self.manager.restore_persisted_state().await;
+
         let event_loop_manager = self.manager.clone();
         let event_loop_handle = tokio::spawn(async move {
             crate::daemon::event_loop::run(event_loop_manager, shutdown_rx).await;
