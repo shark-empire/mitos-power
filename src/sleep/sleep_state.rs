@@ -33,3 +33,30 @@ pub fn set_wakealarm(unix_secs: u64) -> Result<()> {
 pub fn clear_wakealarm() -> Result<()> {
     sysfs::write_string(RTC_WAKEALARM, "0")
 }
+
+/// Best-effort check for whether any swap is currently active, read from
+/// `/proc/swaps`. Not a guarantee hibernate will work (swap could still be
+/// too small for RAM, or `resume=` could be missing from the kernel
+/// command line) -- just enough to give a clear, specific warning for the
+/// single most common "why doesn't hibernate work" cause before attempting
+/// the write. Returns `true` (assume swap present, stay quiet) if
+/// `/proc/swaps` itself can't be read, since an inconclusive check
+/// shouldn't produce a false warning.
+pub fn has_active_swap() -> bool {
+    match std::fs::read_to_string("/proc/swaps") {
+        Ok(contents) => contents.lines().count() > 1, // header line + one per active swap
+        Err(_) => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn has_active_swap_does_not_panic_regardless_of_environment() {
+        // No assertion on the specific value -- this sandbox/CI may or may
+        // not have swap. The property under test is "doesn't panic".
+        let _ = has_active_swap();
+    }
+}

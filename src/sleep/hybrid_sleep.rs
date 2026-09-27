@@ -9,6 +9,9 @@ pub async fn hybrid_sleep() -> Result<()> {
     if !disk_modes.contains("suspend") {
         return Err(PowerError::Unsupported("kernel does not report hybrid-sleep ('suspend' disk mode) support".into()));
     }
+    if !sleep_state::has_active_swap() {
+        tracing::warn!("no active swap found in /proc/swaps -- the disk half of hybrid-sleep will likely fail; see docs/troubleshooting.md");
+    }
     tracing::info!("hybrid-sleeping");
     tokio::task::spawn_blocking(|| {
         sleep_state::write_disk_mode("suspend")?;
