@@ -153,6 +153,7 @@ async fn dispatch(
     method: &str,
     params: &serde_json::Value,
 ) -> ServerMessage {
+    manager.metrics.incr_ipc_requests();
     match dispatch_inner(manager, cred, client_id, method, params).await {
         Ok(value) => ok_response(id, value),
         Err(e) => error_response(id, error_code(&e), &e.to_string()),
@@ -172,6 +173,7 @@ async fn dispatch_inner(
     Ok(match method {
         "Ping" => serde_json::json!({ "pong": true }),
         "GetVersion" => serde_json::json!({ "version": env!("CARGO_PKG_VERSION") }),
+        "GetDiagnostics" => serde_json::to_value(manager.get_diagnostics().await)?,
 
         "GetPowerState" => serde_json::to_value(manager.get_power_state().await)?,
         "GetBattery" => {

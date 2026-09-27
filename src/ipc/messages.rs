@@ -71,6 +71,7 @@ pub mod method_names {
     pub const PUBLIC: &[&str] = &[
         "Ping",
         "GetVersion",
+        "GetDiagnostics",
         "GetPowerState",
         "GetBattery",
         "GetBatteries",
