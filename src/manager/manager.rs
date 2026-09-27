@@ -15,6 +15,8 @@ use crate::ipc::events::{self, DaemonEvent};
 use crate::manager::policy::{Action, PolicyEngine};
 use crate::manager::scheduler::Scheduler;
 use crate::manager::state::PowerStateSnapshot;
+use crate::monitoring::{diagnostics, statistics::Metrics, Diagnostics, HealthTracker};
+use crate::persistence::{self, Database};
 use crate::profiles::{ProfileInfo, ProfileManager};
 use crate::shutdown;
 use crate::sleep;
@@ -37,6 +39,14 @@ pub struct PowerManager {
     pub scheduler: Scheduler,
     pub lid_closed: RwLock<Option<bool>>,
     pub events_tx: broadcast::Sender<DaemonEvent>,
+    /// File-backed settings/statistics/history storage. See
+    /// `restore_persisted_state` for what actually gets loaded/saved
+    /// through it today.
+    pub db: Database,
+    /// Runtime counters (IPC requests served, suspend/resume counts,
+    /// policy actions executed). Exposed read-only via `GetDiagnostics`.
+    pub metrics: Metrics,
+    health: HealthTracker,
     policy_engine: PolicyEngine,
 }
 
@@ -46,6 +56,7 @@ impl PowerManager {
         let profiles = ProfileManager::new(&config.profiles.default_profile, config.profiles.profile.clone())?;
         let idle = IdleDetector::new(&config.display);
         let thermal = ThermalManager::new(&config.thermal)?;
+        let db = Database::open(&config.general.state_dir)?;
 
         Ok(Self {
             battery: RwLock::new(BatteryManager::new()?),
@@ -61,8 +72,64 @@ impl PowerManager {
             lid_closed: RwLock::new(None),
             config: RwLock::new(config),
             events_tx,
+            db,
+            metrics: Metrics::default(),
+            health: HealthTracker::new(),
             policy_engine: PolicyEngine::new(),
         })
+    }
+
+    /// Loads whatever was last persisted (`persistence::settings`) and
+    /// applies it -- last active profile, last brightness. Called once by
+    /// `Daemon::run` before the IPC server starts accepting connections.
+    /// Best-effort: a restore failure is logged, not propagated, since a
+    /// corrupt/stale state file shouldn't stop the daemon from starting
+    /// with built-in defaults instead.
+    pub async fn restore_persisted_state(&self) {
+        let settings = match persistence::settings::load(&self.db) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("could not load persisted settings, starting with defaults: {e}");
+                return;
+            }
+        };
+
+        if let Some(name) = &settings.last_profile {
+            if let Err(e) = self.set_profile(name).await {
+                tracing::warn!("could not restore persisted profile '{name}': {e}");
+            } else {
+                tracing::info!("restored profile '{name}' from last run");
+            }
+        }
+        if let Some(percent) = settings.last_brightness_percent {
+            if let Err(e) = self.set_brightness(percent).await {
+                tracing::warn!("could not restore persisted brightness {percent}%: {e}");
+            } else {
+                tracing::info!("restored brightness {percent}% from last run");
+            }
+        }
+    }
+
+    /// Best-effort persist of one field. Reads the current persisted
+    /// settings, updates just the field the caller changed, and saves --
+    /// a read-modify-write, so two concurrent callers (e.g. SetProfile and
+    /// SetBrightness from two different clients at nearly the same moment)
+    /// could in principle race and one write could clobber the other's
+    /// update. Given this is a "restore roughly where you left off" best
+    /// effort, not a strongly-consistent store, that narrow window is an
+    /// accepted tradeoff rather than something worth a write-queue for.
+    ///
+    /// Also deliberately synchronous rather than `spawn_blocking`'d: this
+    /// briefly blocks whatever tokio worker thread called it on a few KB
+    /// of local disk I/O. Acceptable for how small/rare this write is;
+    /// worth revisiting with spawn_blocking if `persist_setting` ever
+    /// grows to write more than a tiny settings file.
+    fn persist_setting(&self, apply: impl FnOnce(&mut persistence::settings::PersistedSettings)) {
+        let mut settings = persistence::settings::load(&self.db).unwrap_or_default();
+        apply(&mut settings);
+        if let Err(e) = persistence::settings::save(&self.db, &settings) {
+            tracing::warn!("could not persist settings: {e}");
+        }
     }
 
     fn emit(&self, name: &'static str, data: impl serde::Serialize) {
@@ -172,6 +239,7 @@ impl PowerManager {
     }
 
     async fn execute_action(&self, action: Action) {
+        self.metrics.incr_policy_actions();
         match action {
             Action::SetProfile(name) => {
                 if let Err(e) = self.set_profile(&name).await {
@@ -244,6 +312,7 @@ impl PowerManager {
         let timeouts = crate::idle::policy::effective_timeouts(&display_config, &info);
         self.idle.write().await.set_timeouts(timeouts);
 
+        self.persist_setting(|s| s.last_profile = Some(info.name.clone()));
         self.emit(events::PROFILE_CHANGED, &info);
         Ok(())
     }
@@ -257,6 +326,7 @@ impl PowerManager {
     pub async fn set_brightness(&self, percent: u8) -> Result<()> {
         let percent = percent.min(100);
         self.brightness.set_percent(percent)?;
+        self.persist_setting(|s| s.last_brightness_percent = Some(percent));
         self.emit(events::BRIGHTNESS_CHANGED, serde_json::json!({ "percent": percent }));
         Ok(())
     }
@@ -264,9 +334,16 @@ impl PowerManager {
     // ---- sleep -------------------------------------------------------
 
     async fn ensure_not_inhibited(&self, what: InhibitWhat) -> Result<()> {
-        let blockers = self.inhibitors.blockers(what).await;
-        if !blockers.is_empty() {
-            return Err(PowerError::Inhibited(blockers));
+        let (blocking, delaying) = self.inhibitors.split_blockers(what).await;
+        if !blocking.is_empty() {
+            return Err(PowerError::Inhibited(blocking));
+        }
+        if !delaying.is_empty() {
+            let grace = std::time::Duration::from_secs(self.config.read().await.general.inhibitor_delay_grace_secs);
+            tracing::info!("delaying {what:?} up to {grace:?} for: {delaying:?}");
+            if !self.inhibitors.wait_for_delay_clear(what, grace).await {
+                tracing::info!("delay grace period elapsed for {what:?}; proceeding anyway");
+            }
         }
         Ok(())
     }
@@ -278,9 +355,11 @@ impl PowerManager {
     {
         self.ensure_not_inhibited(InhibitWhat::Suspend).await?;
         self.emit(events::SUSPEND_STARTED, serde_json::json!({ "requester": requester, "method": method }));
+        self.metrics.incr_suspend();
         op().await?;
         self.emit(events::SUSPEND_FINISHED, serde_json::json!({ "method": method }));
         self.emit(events::RESUME_STARTED, serde_json::json!({}));
+        self.metrics.incr_resume();
         sleep::wake::on_resume(self).await?;
         self.emit(events::RESUME_FINISHED, serde_json::json!({}));
         Ok(())
@@ -420,5 +499,57 @@ impl PowerManager {
 
     pub async fn security_config(&self) -> SecurityConfig {
         self.config.read().await.security.clone()
+    }
+
+    /// Backs the `GetDiagnostics` IPC method -- uptime, version, detected
+    /// hardware capabilities, and the runtime metrics counters. This is
+    /// what makes `monitoring::statistics::Metrics` (incremented above in
+    /// `around_sleep`/`execute_action`/`ipc::server::dispatch`) actually
+    /// observable from outside the process.
+    pub async fn get_diagnostics(&self) -> Diagnostics {
+        diagnostics::collect(self.health.uptime().as_secs(), self.metrics.snapshot())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_config() -> Config {
+        let mut config = Config::default();
+        config.general.state_dir =
+            std::env::temp_dir().join(format!("mitos-power-manager-test-{}-{}", std::process::id(), uuid::Uuid::new_v4())).to_string_lossy().to_string();
+        config
+    }
+
+    #[tokio::test]
+    async fn restores_persisted_profile_across_a_fresh_instance() {
+        // Proves the persistence wiring added to close the audit.md gap
+        // actually round-trips, not just that it compiles: two separate
+        // `PowerManager` instances sharing the same state_dir, simulating
+        // a daemon restart.
+        let config = temp_config();
+        let state_dir = config.general.state_dir.clone();
+
+        {
+            let manager = PowerManager::new(config.clone()).expect("first PowerManager::new should succeed");
+            manager.set_profile("performance").await.expect("performance is always available");
+        }
+
+        let manager2 = PowerManager::new(config).expect("second PowerManager::new (same state_dir) should succeed");
+        manager2.restore_persisted_state().await;
+        assert_eq!(manager2.get_profile().await.name, "performance");
+
+        let _ = std::fs::remove_dir_all(&state_dir);
+    }
+
+    #[tokio::test]
+    async fn diagnostics_reflects_incremented_metrics() {
+        let manager = PowerManager::new(temp_config()).expect("PowerManager::new should succeed");
+        manager.metrics.incr_ipc_requests();
+        manager.metrics.incr_ipc_requests();
+        let diagnostics = manager.get_diagnostics().await;
+        assert_eq!(diagnostics.metrics.ipc_requests_total, 2);
+        let _ = std::fs::remove_dir_all(&manager.config.read().await.general.state_dir);
     }
 }
