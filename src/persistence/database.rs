@@ -4,15 +4,15 @@
 use crate::errors::{PowerError, Result};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct Database {
     dir: PathBuf,
 }
 
 impl Database {
-    pub fn open(dir: impl Into<PathBuf>) -> Result<Self> {
-        let dir = dir.into();
+    pub fn open(dir: impl AsRef<Path>) -> Result<Self> {
+        let dir = dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&dir)?;
         Ok(Self { dir })
     }
