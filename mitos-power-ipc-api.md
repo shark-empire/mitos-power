@@ -127,6 +127,7 @@ means params can be omitted/`null`/`{}` interchangeably.
 |---|---|---|---|
 | `Ping` | – | | `{"pong": true}` |
 | `GetVersion` | – | | `{"version": "0.1.0"}` |
+| `GetDiagnostics` | – | | [`Diagnostics`](#diagnostics) -- uptime, capabilities, runtime metrics |
 | `GetPowerState` | – | | [`PowerStateSnapshot`](#powerstatesnapshot) |
 | `GetBattery` | – | `{"id"?: string}` (omit for the first/primary battery) | [`BatteryInfo`](#batteryinfo) |
 | `GetBatteries` | – | | array of [`BatteryInfo`](#batteryinfo) |
@@ -217,6 +218,26 @@ clients can rely on every key being present.
 {"level": "nominal", "highest_temp_c": 54.2, "warning_temp_c": 80.0, "critical_temp_c": 95.0}
 ```
 
+##### `Diagnostics`
+```json
+{
+  "uptime_secs": 3600, "version": "0.1.0",
+  "capabilities": {
+    "suspend": true, "hibernate": true, "hybrid_sleep": false,
+    "backlight": true, "battery": true, "thermal_zones": true,
+    "cpu_governor": true, "cpu_boost": true, "rtc_wakealarm": true
+  },
+  "metrics": {
+    "ipc_requests_total": 142, "suspend_count": 3, "resume_count": 3,
+    "policy_actions_executed": 7
+  }
+}
+```
+`capabilities` reflects what *this machine's kernel* reports supporting right
+now (e.g. `hibernate: false` on a box with no swap) -- useful for a settings
+UI to grey out affordances that would just fail. `metrics` are in-memory
+counters that reset to zero on every daemon restart.
+
 ##### `ThermalZoneInfo`
 ```json
 {"id": "thermal_zone0", "zone_type": "x86_pkg_temp", "temperature_c": 54.2, "trip_warning_c": 90.0, "trip_critical_c": 105.0}
@@ -239,8 +260,8 @@ Subscribe with `{"kind":"subscribe","events":[...]}`; every event arrives as
 | `ACChanged` | `{"online": bool}` | AC adapter plugged or unplugged |
 | `ThermalWarning` | [`ThermalSummary`](#thermalsummary) | Thermal level transitions into Warning |
 | `ThermalCritical` | [`ThermalSummary`](#thermalsummary) | Thermal level transitions into Critical (an emergency shutdown is already underway by the time this is sent) |
-| `LidChanged` | `{"closed": bool}` | Lid opened or closed (polled, not instant -- see audit.md) |
-| `PowerButtonPressed` | `{"action": "Ignore"\|"Lock"\|"Suspend"\|"Hibernate"\|"Shutdown"\|"Reboot"}` | A classified power-button press (**not currently reachable** -- no live event source wired up yet, see audit.md) |
+| `LidChanged` | `{"closed": bool}` | Lid opened or closed -- instant via the evdev watcher when available, falls back to poll-tick latency (a few seconds) otherwise |
+| `PowerButtonPressed` | `{"action": "Ignore"\|"Lock"\|"Suspend"\|"Hibernate"\|"Shutdown"\|"Reboot"}` | A classified power-button press, via the evdev watcher (requires a device reporting `KEY_POWER` to be found at startup -- see audit.md for how hardware-verified this path is) |
 | `SuspendStarted` | `{"requester": string, "method": "suspend"\|"hibernate"\|"hybrid_sleep"\|"suspend_then_hibernate"}` | Right before the kernel sleep call |
 | `SuspendFinished` | `{"method": string}` | Right after the kernel sleep call returns (i.e. hardware has woken) |
 | `ResumeStarted` | `{}` | Post-resume restoration begins |
