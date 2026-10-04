@@ -24,6 +24,7 @@ pub mod monitoring;
 pub mod persistence;
 pub mod policy;
 pub mod profiles;
+pub mod session_client;
 pub mod shutdown;
 pub mod sleep;
 pub mod thermal;
