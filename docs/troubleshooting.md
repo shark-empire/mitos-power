@@ -47,6 +47,26 @@ hardware-tested part of mitos-power -- see audit.md section 0 and the
 `src/hardware/evdev.rs` header comment if it's failing in a way that looks
 like a wrong API call rather than a permissions issue.
 
+**`Logout` returns `HARDWARE_ERROR` mentioning mitos-session**
+mitos-session isn't running, or isn't reachable at
+`general.mitos_session_socket_path` (default `/run/mitos-session/session.sock`).
+Unlike the pre-sleep/pre-shutdown session handling (which is silently
+best-effort), `Logout`'s entire job is ending a session via mitos-session,
+so an unreachable mitos-session is a real error here rather than a no-op.
+
+**`Logout` returns `NOT_FOUND`**
+mitos-session is reachable, but reports no session for the calling uid --
+usually means you're calling `Logout` from a context mitos-session doesn't
+know has a session (a plain SSH shell, say, with no `CreateSession` ever
+issued for it).
+
+**Suspend/shutdown proceeded without waiting for mitos-session**
+That's expected, not a bug: every `session_client` call except `Logout` is
+best-effort and never blocks or fails the power action -- see
+docs/architecture.md "mitos-session integration". Check the daemon log at
+`debug` level for the "pre-sleep session lock" / "pre-shutdown session
+wind-down" lines to see what it actually found.
+
 **A setting in `power.toml` doesn't seem to apply after I sent SIGHUP**
 Some config is cached at startup (the profile list, idle timeouts) and needs
 a full daemon restart to pick up changes, not just a reload. See

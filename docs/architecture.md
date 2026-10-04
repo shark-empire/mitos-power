@@ -104,19 +104,85 @@ follow-up (see audit.md).
           |          |          |
           +----------+----------+
                      |
-                mitos-power
-                     |
-       +-------------+-------------+
-       |             |             |
-mitos-session   mitos-services  mitos-gui
-       |             |             |
-       +-------------+-------------+
+                mitos-power  <----------------+
+                     |                        |
+       +-------------+-------------+          | Suspend/Reboot/PowerOff
+       |             |             |          | (see below)
+mitos-session   mitos-services  mitos-gui      |
+       |             |                         |
+       +-------------+-------------------------+
                      |
               mitos-settings
 ```
 
-mitos-power never talks to mitos-session/mitos-gui/mitos-settings/mitos-services
-directly -- every one of those is a *client* of mitos-power's IPC socket (see
-`docs/ipc.md`), and mitos-power has no outbound client of its own to any of
-them yet (`shutdown::logout` documents this gap explicitly for the one place
-it matters most today).
+mitos-gui/mitos-settings/mitos-services are (or would be) plain clients of
+mitos-power's IPC socket, as `docs/ipc.md` describes. mitos-session is
+different: it's the one component mitos-power also calls *out* to.
+
+### mitos-session integration
+
+**The problem this solves.** Reading mitos-session's actual source (its
+`power/` module) surfaced a real conflict: mitos-session shipped with its
+own `SystemPowerBackend`, writing to `/sys/power/state` and calling
+`reboot(2)` directly -- completely independent of mitos-power, which the
+original spec already named as the sole owner of exactly those operations.
+Two daemons both able to trigger a kernel-level suspend/reboot/poweroff,
+with only one of them (mitos-session) also locking sessions and notifying
+compositors first, is a real bug waiting to happen: anything that reached
+mitos-power directly -- the policy engine's auto-hibernate on critical
+battery, a lid close, `mitos-powerctl suspend`, an app that simply didn't
+know to prefer mitos-session -- would suspend the machine with the desktop
+left unlocked.
+
+**The resolution**, implemented across both projects:
+
+- mitos-session's `power` module gained a `mitos_power` backend
+  (`session_client`'s counterpart on that side) that calls mitos-power's
+  `Suspend`/`Reboot`/`PowerOff` instead of touching the kernel itself. It
+  remains the default there. mitos-session's own inhibitor-check,
+  session-locking and compositor-notification sequence is unchanged --
+  only the final kernel transition moved. mitos-session's `Direct`
+  backend still exists for a mitos-power-less boot.
+- Symmetrically, mitos-power gained `session_client` (`src/session_client/`,
+  not part of the original spec's file tree): an async client for
+  mitos-session's real wire protocol -- length-prefixed bincode, a
+  completely different format from mitos-power's own NDJSON, mirrored
+  by hand in `session_client::protocol` since the two are independent
+  Cargo projects with no shared crate. `PowerManager` now calls it in
+  three places:
+  - `Logout` ends the caller's mitos-session sessions (`shutdown::logout`)
+    -- previously a documented no-op.
+  - `around_sleep` (Suspend/Hibernate/HybridSleep/SuspendThenHibernate)
+    locks every session first (`notify_session_before_sleep`).
+  - `shutdown`/`reboot`/`poweroff` wind sessions down first
+    (`notify_session_before_shutdown`).
+
+**Avoiding a call cycle.** mitos-session's `Suspend` request already locks
+sessions before calling mitos-power; mitos-power's own `Suspend` *also*
+tries to lock sessions before proceeding. When the call came from
+mitos-session, this is redundant -- but harmless, since locking an
+already-locked session is a no-op on mitos-session's side (and
+`session_client` skips already-locked sessions itself as a further guard).
+Neither side waits for the other to finish its own lock/notify sequence
+before doing its part; there's no shared "I'm already handling this,
+don't do it again" handshake. That's a deliberate simplicity trade-off,
+not an oversight -- see audit.md for what a tighter handshake would need.
+
+**Honestly-scoped limits, by design, not oversight:**
+- Every `session_client` call is best-effort: if mitos-session is
+  unreachable (a legitimate minimal-boot configuration, per its own
+  README), locking/winding-down silently does nothing and the power
+  action proceeds anyway. `Logout` is the one exception -- it's the
+  entire point of the call, so an unreachable mitos-session is a real
+  error there, not a silent no-op.
+- mitos-power's pre-sleep lock reaches every session's *lock state*, not
+  its compositor notification (`PrepareForSleep`/`ResumedFromSleep`).
+  Those events are internal to mitos-session's own `Suspend` handler and
+  aren't triggered by locking a session from outside. A compositor that
+  needs to know sleep is imminent (to pause video, say) only reliably
+  gets that when the request came through mitos-session in the first
+  place.
+- `session_client::protocol`'s types were mirrored by reading
+  mitos-session's source once; there is no shared crate and no compiler
+  check linking the two. If mitos-session's wire types change, this
+  drifts out of sync silently. See audit.md.

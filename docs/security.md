@@ -42,6 +42,18 @@ at the `audit` tracing target, recording who requested it (`uid:N`, from
 peer credentials) and whether it was forced. This currently rides on regular
 process logs rather than a dedicated rotated file -- see audit.md.
 
+## The mitos-session connection
+
+mitos-power is a client of mitos-session's socket too (`session_client`,
+for `Logout` and session locking/wind-down -- see docs/architecture.md
+"mitos-session integration"). No new authentication surface: mitos-power
+runs as root, mitos-session's own model already grants root unrestricted
+access to every request, so this is exactly as privileged as everything
+else mitos-power does. The connection is outbound-only -- mitos-session
+never connects *to* mitos-power's socket as a privileged peer any
+differently than any other client would (root, for its `Suspend`/
+`Reboot`/`PowerOff` requests, matching the Privileged tier above).
+
 ## What's explicitly out of scope
 
 mitos-power does not authenticate *which application* is calling beyond its

@@ -23,6 +23,8 @@ IPC Suspend/Hibernate/...
         |
 check Suspend inhibitors  (blocked? -> INHIBITED error, nothing happens)
         |
+best-effort: lock every mitos-session session (session_client)
+        |
 emit SuspendStarted
         |
 spawn_blocking: write /sys/power/*   <-- blocks here until hardware wakes
@@ -36,18 +38,30 @@ sleep::wake::on_resume: restore CPU governor/boost, reset idle timer,
 emit ResumeFinished
 ```
 
-Locking the session before suspend and unlocking after resume is
-`mitos-session`'s job, not mitos-power's -- `SuspendStarted`/`ResumeFinished`
-are exactly the events mitos-session should subscribe to for that.
+Locking is mitos-session's responsibility, not mitos-power's -- but
+mitos-power asks it to lock every session before every suspend/hibernate
+regardless of who triggered it (see docs/architecture.md "mitos-session
+integration"), since not every path here goes through mitos-session's own
+`Suspend` request (which already locks first on its own). Unlocking after
+resume is mitos-session's alone; mitos-power has no part in it.
+`SuspendStarted`/`ResumeFinished` are the events any other component should
+subscribe to if it needs to react around sleep too.
 
 ## Shutdown / reboot / poweroff
 
-Graceful path: audit log -> sync filesystems (`nix::unistd::sync`) -> raw
-`reboot(2)` syscall (`RB_POWER_OFF` / `RB_AUTOBOOT`). `force: true` skips the
-Shutdown-inhibitor check; `force: false` (the default) respects it. The one
-path that skips everything, including the inhibitor check and the audit
-log's usual place in the flow, is `shutdown::emergency::emergency_poweroff`,
-called only by `thermal::protection` on a Critical reading.
+Graceful path: audit log -> `force: false` (the default) checks Shutdown
+inhibitors, `force: true` skips that check -> best-effort wind down every
+mitos-session session (`session_client::terminate_all_sessions`, giving
+applications a chance to exit) -> sync filesystems (`nix::unistd::sync`) ->
+the configured `shutdown.backend` transition (`shutdown::transition`):
+either a raw `reboot(2)` syscall directly (`direct`, the default -- works
+with no other MITOS components running), or a signal to PID 1 so
+mitos-services stops every supervised service in dependency order first
+(`supervised` -- see `src/shutdown/transition.rs`). The one path that
+skips everything -- inhibitor check, session wind-down, and the audit
+log's usual place in the flow -- is `shutdown::emergency::emergency_poweroff`,
+called only by `thermal::protection` on a Critical reading, which always
+goes straight to the kernel regardless of `shutdown.backend`.
 
 ## Known constraints
 

@@ -163,7 +163,7 @@ means params can be omitted/`null`/`{}` interchangeably.
 | `Shutdown` | – | `{"force"?: bool}` (default `false`; `true` skips the Shutdown-inhibitor check) | `{}` (does not return -- the machine powers off) |
 | `Reboot` | – | `{"force"?: bool}` | `{}` (does not return) |
 | `Poweroff` | – | | `{}` (does not return; equivalent to `Shutdown` with `force: true`) |
-| `Logout` | – | | `{}` (**currently a no-op** -- mitos-session integration not implemented, see audit.md) |
+| `Logout` | – | | `{}` -- ends every mitos-session session belonging to the caller's uid. Errors (`NOT_FOUND`, `HARDWARE_ERROR`) if there's no session for the caller or mitos-session isn't reachable -- see docs/architecture.md "mitos-session integration" |
 | `ScheduleShutdown` | **yes** | `{"at": "<RFC3339 timestamp>", "reboot"?: bool}` | `{"id": "<uuid>"}` |
 | `CancelScheduledOperation` | **yes** | `{"id": "<uuid>"}` | `{}` |
 
@@ -300,7 +300,7 @@ Subscribe with `{"kind":"subscribe","events":[...]}`; every event arrives as
 | Component | Typical usage |
 |---|---|
 | **mitos-gui** | Subscribes to almost everything for a status-bar power indicator; calls `SetBrightness`/`SetProfile` from quick-settings; owns actual screen blanking/DPMS and color temperature, driven by `IdleStateChanged` (mitos-power tracks *intended* display state but doesn't own the compositor -- see `docs/architecture.md`) |
-| **mitos-session** | Subscribes to `SuspendStarted`/`ResumeFinished` to lock/unlock the session around sleep; is the intended target of `Logout` (not yet implemented -- see audit.md); calls `ReportActivity` on real input events |
+| **mitos-session** | Subscribes to `SuspendStarted`/`ResumeFinished` to react around sleep; its own `Suspend`/`Reboot`/`PowerOff` requests call *into* mitos-power (see docs/architecture.md "mitos-session integration" -- this is the one component mitos-power also calls *out* to, for `Logout` and pre-sleep/pre-shutdown session handling); calls `ReportActivity` on real input events |
 | **mitos-settings** | `ListProfiles`/`SetProfile`, `ListInhibitors` (troubleshooting UI), reads `sleep.toml`/`display.toml`/etc. directly for the settings panel itself (not through mitos-power's IPC -- config *files* aren't served over IPC, only current *state*) |
 | **mitos-terminal** | Nothing special; same public surface as any other client |
 | **mitos-powerctl** | The reference CLI client for this whole API -- see `bin/mitos-powerctl.rs` for a complete worked example of every method |
