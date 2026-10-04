@@ -48,12 +48,20 @@ udev = "0.8"
 # src/hardware/evdev.rs and audit.md.
 evdev = "0.12"
 
-# Raw reboot(2)/sync(2) syscalls for shutdown/reboot/poweroff, and peer-group
-# lookups for IPC permission checks. NOTE: nix's feature-flag names have
-# moved around across 0.2x releases -- if `cargo build` complains about a
-# missing feature, check `cargo add nix --features reboot,user` for the
-# version that actually resolves and adjust this list.
-nix = { version = "0.27", features = ["reboot", "user", "fs"] }
+# Raw reboot(2)/sync(2) syscalls for shutdown/reboot/poweroff, signalling
+# PID 1 for the supervised shutdown path (`signal`/`process`), and
+# peer-group lookups for IPC permission checks. Version and feature list
+# deliberately match mitos-session's (0.29) so both daemons resolve one
+# nix. NOTE: nix's feature-flag names have moved around across releases --
+# if `cargo build` complains about a missing feature, check
+# `cargo add nix --features reboot,user,fs,signal,process` for the version
+# that actually resolves and adjust this list.
+nix = { version = "0.29", features = ["reboot", "user", "fs", "signal", "process"] }
+
+# Wire format of mitos-session's IPC (length-prefixed bincode). Pinned to
+# the same 1.3 series mitos-session uses -- see src/session_client/protocol.rs
+# for why matching Rust types is what makes the two sides compatible.
+bincode = "1.3"
 
 [profile.release]
 opt-level = 3
