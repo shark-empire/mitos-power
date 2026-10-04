@@ -4,6 +4,7 @@
 //! things like `short_press`, which isn't a sane default).
 
 use crate::profiles::custom::CustomProfileToml;
+use crate::shutdown::transition::TransitionBackend;
 use serde::{Deserialize, Serialize};
 
 // ---- power.toml ------------------------------------------------------
@@ -20,6 +21,12 @@ pub struct GeneralConfig {
     /// unaffected by this -- they fail the request immediately, with no
     /// waiting. See docs/power-model.md "Inhibitors".
     pub inhibitor_delay_grace_secs: u64,
+    /// mitos-session's IPC socket -- what `Logout` and the pre-sleep /
+    /// pre-shutdown session handling talk to. Missing or unreachable is
+    /// fine (a minimal boot with no session manager); see
+    /// `session_client` and docs/architecture.md "mitos-session
+    /// integration". Default matches mitos-session's own default.
+    pub mitos_session_socket_path: String,
 }
 
 impl Default for GeneralConfig {
@@ -30,6 +37,7 @@ impl Default for GeneralConfig {
             log_level: "info".into(),
             state_dir: "/var/lib/mitos/power".into(),
             inhibitor_delay_grace_secs: 5,
+            mitos_session_socket_path: "/run/mitos-session/session.sock".into(),
         }
     }
 }
@@ -74,6 +82,16 @@ pub struct KeyboardConfig {
     pub brightness_hotkeys: bool,
 }
 
+/// `[shutdown]` in power.toml: how mitos-power performs the final poweroff/
+/// reboot transition. mitos-power is the *only* component that touches
+/// the kernel for this (mitos-session delegates to it) -- so this is the
+/// one place a full install with mitos-services flips to `supervised`.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct ShutdownConfig {
+    pub backend: TransitionBackend,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub(super) struct PowerToml {
@@ -81,6 +99,7 @@ pub(super) struct PowerToml {
     pub security: SecurityConfig,
     pub power_button: PowerButtonConfig,
     pub keyboard: KeyboardConfig,
+    pub shutdown: ShutdownConfig,
 }
 
 // ---- profiles.toml -----------------------------------------------------

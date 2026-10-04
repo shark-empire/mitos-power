@@ -30,6 +30,7 @@ pub fn load(dir: &Path) -> Result<Config> {
         security: power.security,
         power_button: power.power_button,
         keyboard: power.keyboard,
+        shutdown: power.shutdown,
         profiles,
         battery,
         sleep,

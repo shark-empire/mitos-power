@@ -12,7 +12,7 @@ mod validation;
 
 pub use defaults::{
     BatteryConfig, DisplayConfig, GeneralConfig, KeyboardConfig, LidConfig, PowerButtonConfig, ProfilesConfig, SecurityConfig,
-    SleepConfig, ThermalConfig,
+    ShutdownConfig, SleepConfig, ThermalConfig,
 };
 
 use crate::errors::Result;
@@ -24,6 +24,7 @@ pub struct Config {
     pub security: SecurityConfig,
     pub power_button: PowerButtonConfig,
     pub keyboard: KeyboardConfig,
+    pub shutdown: ShutdownConfig,
     pub profiles: ProfilesConfig,
     pub battery: BatteryConfig,
     pub sleep: SleepConfig,
@@ -46,6 +47,7 @@ impl Default for Config {
             security: SecurityConfig::default(),
             power_button: PowerButtonConfig::default(),
             keyboard: KeyboardConfig::default(),
+            shutdown: ShutdownConfig::default(),
             profiles: ProfilesConfig::default(),
             battery: BatteryConfig::default(),
             sleep: SleepConfig::default(),
