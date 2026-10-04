@@ -13,6 +13,14 @@ check was added before hibernate, and a live evdev input-event source was
 added for lid/power-button/brightness hotkeys. Sections below are updated
 accordingly; a few net-new risk areas came with that (see section 0).*
 
+*Third pass note: the actual mitos-session project (its real source, not
+a guess) was read and `Logout` now really ends sessions through it; a
+"lock sessions before an out-of-band suspend" / "wind sessions down
+before shutdown" safety net was added; mitos-session's own power module
+was changed to delegate its kernel transition to mitos-power instead of
+duplicating it. See section 2's expanded entries and the new
+`session_client` / `shutdown::transition` modules.*
+
 Legend: ✅ implemented and, to the best of my ability without a compiler,
 correct · ⚠️ implemented but with a real, documented limitation · ‼️ not
 implemented (structure/interface may exist; the behavior doesn't)
@@ -57,21 +65,76 @@ compositor action).
 
 ## 2. Sleep / shutdown
 
-⚠️ **sleep** -- fully implemented against `/sys/power/*`. **New:**
-`hibernate()`/`hybrid_sleep()` now check `/proc/swaps` first and log a
-specific warning if no swap is active at all, before attempting the write
--- doesn't hard-block (a marginal-but-working setup shouldn't be refused on
-this coarse a check) and still doesn't check swap *size* vs. RAM or
-`resume=` correctness, but the single most common failure cause now gets a
-clear, early log line instead of just an opaque syscall failure.
-Suspend/hibernate themselves are still untestable outside a disposable VM
--- `tests/suspend.rs`/`hibernate.rs` still `#[ignore]` everything that would
-actually call them.
-⚠️ **shutdown/reboot/poweroff** -- unchanged: real syscalls, untestable here,
-`#[ignore]`d tests.
-‼️ **shutdown/logout** -- still an explicit no-op; still blocked on
-mitos-session's IPC protocol not existing yet. Unchanged, and the single
-most important remaining integration gap.
+⚠️ **sleep** -- fully implemented against `/sys/power/*`, including the
+`/proc/swaps` warning before hibernate/hybrid-sleep (still doesn't check
+swap *size* vs. RAM or `resume=`). **New this pass:** every
+Suspend/Hibernate/HybridSleep/SuspendThenHibernate call now best-effort
+locks every mitos-session session first (`PowerManager::notify_session_before_sleep`)
+-- see section 2a. Suspend/hibernate themselves are still untestable
+outside a disposable VM -- `tests/suspend.rs`/`hibernate.rs` still
+`#[ignore]` everything that would actually call them.
+✅→⚠️ **shutdown/reboot/poweroff** -- **restructured.** The actual kernel
+call moved into `shutdown::transition::TransitionBackend` (new), which now
+supports two paths, configured via `power.toml`'s `[shutdown].backend`:
+`direct` (the default -- `sync()` + raw `reboot(2)`, as before) and
+`supervised` (new -- signals PID 1 the same way mitos-session's own
+`SupervisedBackend` does, for mitos-services to stop services in order
+first). The `supervised` path's signal mapping was copied from
+mitos-session's `power/supervised.rs` doc comment (SIGTERM=poweroff,
+SIGINT=reboot) and, like that comment says of itself, has **not** been
+checked against mitos-init's actual handling of those signals -- no
+mitos-init source was available to either project. Both paths remain
+untestable here (real syscalls / a real PID 1), `#[ignore]`d tests
+unchanged. **New:** both now best-effort wind sessions down via
+mitos-session first (`notify_session_before_shutdown`) -- see section 2a.
+‼️→✅ **shutdown/logout** -- **implemented**, via the real mitos-session
+protocol (see section 2a). Ends every session matching the caller's uid,
+reported by mitos-session's `ListSessions`. Unlike the pre-sleep/
+pre-shutdown hooks, an unreachable mitos-session or no matching session is
+a real `Err` here, not a silent no-op -- see `src/shutdown/logout.rs`'s
+doc comment for why.
+
+### 2a. mitos-session integration (`session_client`, new this pass)
+
+✅ **Wire protocol mirror** (`session_client::protocol`) -- the real
+`Request`/`Response`/`Event`/`Message` enums and everything they reference
+(`SessionInfo`, `AuthOutcome`, `ElevationAction`, ...), hand-mirrored from
+mitos-session's actual source (not guessed) because bincode has no field
+names on the wire and gets every variant ordinal from declaration order.
+Three tests pin the ordinals of the specific request variants mitos-power
+sends (`TerminateSession`=1, `ListSessions`=3, `LockSession`=5) so an
+accidental reordering of the mirrored `Request` enum fails loudly instead
+of silently sending the wrong request. **What these tests can't prove**:
+that the mirror matches the *real* mitos-session's wire format, only that
+it's internally self-consistent -- that needs a real mitos-session to talk
+to, which wasn't available here. If mitos-session's wire types change
+after this was written, this drifts out of sync with no compiler to catch
+it (the two are independent crates).
+✅ **Client + best-effort helpers** (`session_client::client`) --
+`lock_all_sessions`/`terminate_sessions_for_uid`/`terminate_all_sessions`,
+each connect-with-timeout (3s) and call-with-timeout (5s) so a wedged or
+absent mitos-session can never hang a suspend/shutdown/logout. Tested
+against a fake in-process stand-in (`fake_session_manager` in
+`client.rs`'s tests) covering: no listener at all (`Unreachable`), per-uid
+filtering, already-locked sessions skipped, a refused lock counted but not
+an error. Same caveat as the protocol mirror: these tests prove the
+*client's own logic* is correct, not that it round-trips with the real
+daemon.
+⚠️ **Call-cycle redundancy, not a bug** -- when mitos-session's own
+`Suspend` request is what triggered this (after mitos-session's new
+`mitos_power` backend was added on its side -- see that project's own
+changes), mitos-session has already locked sessions before calling
+mitos-power, which then tries to lock them again. Harmless (locking an
+already-locked session is a no-op there, and `session_client` skips
+already-locked sessions as a second guard) but wasteful. Not fixed because
+fixing it needs a signal of "this call already came from you" that
+neither protocol currently carries -- see docs/architecture.md
+"mitos-session integration" for the reasoning.
+‼️ **No compositor `PrepareForSleep` notification** when mitos-power's
+side initiates the sleep. Locking a session from outside doesn't trigger
+mitos-session's own `Suspend` handler's compositor-notify step -- only
+going through mitos-session's `Suspend` request does that. Documented,
+not fixed; see docs/architecture.md.
 
 ## 3. Input devices
 
