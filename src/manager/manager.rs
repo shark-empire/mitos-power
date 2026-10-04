@@ -348,12 +348,44 @@ impl PowerManager {
         Ok(())
     }
 
+    /// Best-effort: lock every mitos-session session before a sleep this
+    /// manager is about to perform. Redundant (and harmless -- locking an
+    /// already-locked session is a no-op on mitos-session's side) when the
+    /// caller was mitos-session itself, which already locks before asking
+    /// mitos-power to do the kernel part; this is the safety net for every
+    /// *other* path to Suspend/Hibernate/etc. -- the policy engine, a lid
+    /// close, a power button, `mitos-powerctl suspend`. Never blocks or
+    /// fails the sleep: a machine with no session manager, or one that's
+    /// unreachable, just suspends with nothing to lock. See
+    /// `session_client` and docs/architecture.md.
+    async fn notify_session_before_sleep(&self) {
+        let socket = self.config.read().await.general.mitos_session_socket_path.clone();
+        let outcome = crate::session_client::lock_all_sessions(std::path::Path::new(&socket)).await;
+        tracing::debug!("pre-sleep session lock: {outcome:?}");
+    }
+
+    /// Best-effort counterpart for shutdown/reboot/poweroff: gives running
+    /// applications a chance to exit via mitos-session before the kernel
+    /// transition, the same "Applications -> mitos-session -> ... -> stop
+    /// services -> sync -> kernel" flow the spec describes. Never blocks
+    /// or fails the transition.
+    async fn notify_session_before_shutdown(&self) {
+        let socket = self.config.read().await.general.mitos_session_socket_path.clone();
+        let outcome = crate::session_client::terminate_all_sessions(std::path::Path::new(&socket)).await;
+        tracing::debug!("pre-shutdown session wind-down: {outcome:?}");
+    }
+
+    async fn transition_backend(&self) -> crate::shutdown::transition::TransitionBackend {
+        self.config.read().await.shutdown.backend
+    }
+
     async fn around_sleep<F, Fut>(&self, requester: &str, method: &'static str, op: F) -> Result<()>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<()>>,
     {
         self.ensure_not_inhibited(InhibitWhat::Suspend).await?;
+        self.notify_session_before_sleep().await;
         self.emit(events::SUSPEND_STARTED, serde_json::json!({ "requester": requester, "method": method }));
         self.metrics.incr_suspend();
         op().await?;
@@ -391,26 +423,36 @@ impl PowerManager {
         if !force {
             self.ensure_not_inhibited(InhibitWhat::Shutdown).await?;
         }
-        shutdown::shutdown::shutdown(requester, force).await
+        self.notify_session_before_shutdown().await;
+        shutdown::shutdown::shutdown(requester, force, self.transition_backend().await).await
     }
 
     pub async fn reboot(&self, requester: &str, force: bool) -> Result<()> {
         if !force {
             self.ensure_not_inhibited(InhibitWhat::Shutdown).await?;
         }
-        shutdown::reboot::reboot(requester, force).await
+        self.notify_session_before_shutdown().await;
+        shutdown::reboot::reboot(requester, force, self.transition_backend().await).await
     }
 
     pub async fn poweroff(&self, requester: &str) -> Result<()> {
-        shutdown::poweroff::poweroff(requester).await
+        self.notify_session_before_shutdown().await;
+        shutdown::poweroff::poweroff(requester, self.transition_backend().await).await
     }
 
-    pub async fn logout(&self, requester: &str) -> Result<()> {
-        shutdown::logout::logout(requester).await
+    /// Ends the caller's own mitos-session sessions. `requester_uid` comes
+    /// straight from the IPC connection's peer credentials
+    /// (`ipc::server::dispatch_inner`) -- there is no "log out someone
+    /// else" form of this call.
+    pub async fn logout(&self, requester_uid: u32) -> Result<()> {
+        let socket = self.config.read().await.general.mitos_session_socket_path.clone();
+        shutdown::logout::logout(requester_uid, std::path::Path::new(&socket)).await
     }
 
     pub async fn schedule_shutdown(&self, at: DateTime<Utc>, reboot: bool) -> Result<Uuid> {
-        let id = self.scheduler.schedule(at, reboot);
+        let backend = self.transition_backend().await;
+        let general = self.config.read().await.general.clone();
+        let id = self.scheduler.schedule(at, reboot, backend, general);
         self.emit(events::SHUTDOWN_SCHEDULED, serde_json::json!({ "id": id, "at": at, "reboot": reboot }));
         Ok(id)
     }
