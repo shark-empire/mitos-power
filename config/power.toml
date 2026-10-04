@@ -9,6 +9,12 @@ state_dir = "/var/lib/mitos/power"
 # Shutdown proceed anyway. Block-mode inhibitors ignore this and fail the
 # request immediately -- see docs/power-model.md "Inhibitors".
 inhibitor_delay_grace_secs = 5
+# mitos-session's IPC socket. Used for: Logout (ends the caller's
+# sessions), locking sessions before a suspend/hibernate that didn't come
+# from mitos-session itself, and winding sessions down before shutdown/
+# reboot. Unreachable is fine -- see docs/architecture.md "mitos-session
+# integration".
+mitos_session_socket_path = "/run/mitos-session/session.sock"
 
 [security]
 # Group whose members may call privileged methods (Suspend, Shutdown, ...)
@@ -24,3 +30,14 @@ multi_press_window_ms = 600
 
 [keyboard]
 brightness_hotkeys = true
+
+[shutdown]
+# How mitos-power performs the final poweroff/reboot transition -- the one
+# place a full install with mitos-services differs from a minimal boot.
+# See src/shutdown/transition.rs.
+#   direct     -- mitos-power calls sync()/reboot(2) itself. Works with no
+#                 other MITOS components running; the default.
+#   supervised -- mitos-power signals PID 1, which relays to mitos-services
+#                 so every supervised service stops in dependency order
+#                 first. Use this on a full install.
+backend = "direct"
