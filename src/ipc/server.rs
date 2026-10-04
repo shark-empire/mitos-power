@@ -214,7 +214,7 @@ async fn dispatch_inner(
             serde_json::json!({})
         }
         "Poweroff" => { manager.poweroff(&requester(cred)).await?; serde_json::json!({}) }
-        "Logout" => { manager.logout(&requester(cred)).await?; serde_json::json!({}) }
+        "Logout" => { manager.logout(cred.uid()).await?; serde_json::json!({}) }
 
         "ScheduleShutdown" => {
             let p: ScheduleShutdownParams = parse_params(params)?;
